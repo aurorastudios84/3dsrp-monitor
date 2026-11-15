@@ -1,0 +1,55 @@
+name: Refresh and publish dashboard
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: dashboard
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test collector
+        run: python -m unittest discover -s tests -v
+      - name: Refresh snapshot
+        env:
+          PREVIOUS_SNAPSHOT_URL: https://aurorastudios84.github.io/3dsrp-monitor/data/dashboard.json
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_METRICS_TOKEN: ${{ secrets.GH_METRICS_TOKEN }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_REFRESH_TOKEN: ${{ secrets.REDDIT_REFRESH_TOKEN }}
+          MONITOR_FEEDS: ${{ secrets.MONITOR_FEEDS || '[]' }}
+        run: python collect.py
+      - name: Save historical data
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add site/data/history.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update daily dashboard snapshot'
+            git push
+          fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          retention-days: 1
+          path: site
+      - name: Publish
+        id: deployment
+        uses: actions/deploy-pages@v4

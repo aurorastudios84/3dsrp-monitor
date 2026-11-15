@@ -1,0 +1,10 @@
+{
+  "repository": "aurorastudios84/3dsrp",
+  "queries": ["3DSRP", "3DS Remote Play", "3DS remoteplay", "3DS PS5 remote play", "3DS PS4 remote play"],
+  "feeds": [],
+  "seed_mentions": [
+    {"url":"https://www.reddit.com/r/3dspiracy/comments/1xvysxa/3dsrp_for_the_original_3ds/","title":"3DSRP for the original 3DS","platform":"Reddit","author":"stepcach","community":"r/3dspiracy"},
+    {"url":"https://www.reddit.com/r/3dspiracy/comments/1xekga3/release_3dsrp_play_ps4_and_ps5_games_on_your_new/","title":"3DSRP: Play PS4 and PS5 games on your New Nintendo 3DS","platform":"Reddit","author":"stepcach","community":"r/3dspiracy"},
+    {"url":"https://www.reddit.com/r/3dshomebrew/comments/1xdltss/remoteplay_for_the_new_3ds/","title":"Remoteplay for the New 3DS","platform":"Reddit","community":"r/3dshomebrew"}
+  ]
+}
