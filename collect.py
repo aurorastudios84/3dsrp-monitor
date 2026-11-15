@@ -4,6 +4,7 @@ import base64
 import copy
 import datetime as dt
 import json
+from html.parser import HTMLParser
 import os
 from pathlib import Path
 import re
@@ -48,10 +49,120 @@ def canonical(url):
             return canonical(target)
     query = [(k, v) for k, v in urllib.parse.parse_qsl(p.query) if not k.startswith("utm_") and k not in ("fbclid", "gclid")]
     host = p.hostname.lower().removeprefix("www.")
-    match = re.search(r"/comments/([a-z0-9]+)", p.path) if host.endswith("reddit.com") else None
+    if host in ("youtube.com", "m.youtube.com", "youtu.be"):
+        video_id = dict(query).get("v") if p.path == "/watch" else None
+        if host == "youtu.be":
+            video_id = p.path.strip("/")
+        elif p.path.startswith(("/shorts/", "/embed/")):
+            video_id = p.path.split("/")[2]
+        if video_id and re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            return "https://youtube.com/watch?v=" + video_id
+    match = re.search(r"/comments/([a-z0-9]+)", p.path) if (host == "reddit.com" or host.endswith(".reddit.com")) else None
     if match:
         return "https://reddit.com/comments/" + match[1]
     return urllib.parse.urlunsplit(("https", host, p.path.rstrip("/"), urllib.parse.urlencode(query), ""))
+
+
+class DuckDuckGoBlocked(RuntimeError):
+    pass
+
+
+class DuckDuckGoMarkupChanged(RuntimeError):
+    pass
+
+
+class SearchResultsParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.results = []
+        self.current = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "a" and "result__a" in attrs.get("class", "").split():
+            self.current = {"url": attrs.get("href", ""), "title": ""}
+
+    def handle_data(self, text):
+        if self.current is not None:
+            self.current["title"] += text
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self.current is not None:
+            self.results.append(self.current)
+            self.current = None
+
+
+def parse_duckduckgo(html):
+    lower = html.lower()
+    if any(marker in lower for marker in ('anomaly.js', 'challenge-form', 'bots use duckduckgo', 'g-recaptcha')):
+        raise DuckDuckGoBlocked()
+    parser = SearchResultsParser()
+    parser.feed(html)
+    items = []
+    for item in parser.results:
+        url = urllib.parse.urljoin("https://duckduckgo.com", item["url"])
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.hostname in ("duckduckgo.com", "www.duckduckgo.com"):
+            url = urllib.parse.parse_qs(parsed.query).get("uddg", [""])[0]
+        try:
+            url = canonical(url)
+        except ValueError:
+            continue
+        if item["title"].strip():
+            items.append({"url": url, "title": item["title"].strip()})
+    if not items and not any(marker in lower for marker in ('no-results', 'no results found')):
+        raise DuckDuckGoMarkupChanged()
+    return items
+
+
+def platform_for(url):
+    host = urllib.parse.urlsplit(url).hostname or ""
+    for domain, name in (("reddit.com", "Reddit"), ("youtube.com", "YouTube"), ("youtu.be", "YouTube"), ("x.com", "X"), ("twitter.com", "X"), ("instagram.com", "Instagram"), ("facebook.com", "Facebook")):
+        if host == domain or host.endswith("." + domain):
+            return name
+    return "Web"
+
+
+def collect_duckduckgo(state, config):
+    queries = config.get("duckduckgo_queries", [])
+    if not queries:
+        unconfigured(state, "DuckDuckGo", "No discovery queries configured.")
+        return
+    previous = state["sources"].get("DuckDuckGo", {})
+    completed, found = 0, 0
+    for query in queries:
+        try:
+            html = request("https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({"q": query})).decode("utf-8", errors="replace")
+            items = parse_duckduckgo(html)
+        except Exception as exc:
+            if isinstance(exc, DuckDuckGoBlocked):
+                reason = "DuckDuckGo blocked automated access. No challenge bypass attempted."
+            elif isinstance(exc, DuckDuckGoMarkupChanged):
+                reason = "Search response was unrecognized; it was not treated as zero results."
+            else:
+                reason = "Search unavailable (" + (f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else type(exc).__name__) + ")."
+            state["sources"]["DuckDuckGo"] = {**previous, "status": "partial" if completed else "error", "checked_at": NOW, "message": f"{reason} {completed}/{len(queries)} queries completed; existing links retained. Will retry on the next scheduled run."}
+            return
+        for item in items:
+            key = canonical(item["url"])
+            if key in state["mentions"]:
+                # Search rediscovery must not overwrite API metadata or freshness.
+                state["mentions"][key]["search_seen_at"] = NOW
+                continue
+            item.update(platform=platform_for(item["url"]), discovery="DuckDuckGo search", search_seen_at=NOW)
+            if item["platform"] == "YouTube":
+                parts = urllib.parse.urlsplit(item["url"])
+                video_id = urllib.parse.parse_qs(parts.query).get("v", [None])[0]
+                if parts.hostname == "youtu.be":
+                    video_id = parts.path.strip("/")
+                if video_id and re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+                    item["video_id"] = video_id
+            merge_mention(state, item)
+            found += 1
+        completed += 1
+        if completed < len(queries):
+            time.sleep(2)
+    state["sources"]["DuckDuckGo"] = {"status": "ok", "checked_at": NOW, "last_success": NOW, "message": f"{completed} queries completed; {found} new links. Unofficial, partial indexed-web discovery; no engagement metrics."}
 
 
 def asset_group(name):
@@ -248,6 +359,7 @@ def main():
     source(state, "GitHub", lambda: collect_github(state, config))
     for kind in ("views", "clones"):
         collect_traffic(state, config, kind)
+    collect_duckduckgo(state, config)
     collect_youtube(state, config)
     collect_reddit(state, config)
     feeds = config["feeds"] + json.loads(os.environ.get("MONITOR_FEEDS", "[]"))
@@ -255,7 +367,7 @@ def main():
         source(state, "Feed: " + feed["name"], lambda f=feed: collect_feed(state, f))
     if not feeds:
         unconfigured(state, "Web alerts", "No RSS/Atom feeds configured. Add Google Alerts RSS feeds or relevant publisher feeds.")
-    unconfigured(state, "X / Instagram / Facebook", "Search shortcuts only. No automatic collection or engagement metrics configured.")
+    unconfigured(state, "X / Instagram / Facebook", "DuckDuckGo may discover indexed public links. Native search shortcuts available; no engagement metrics.")
     # Do not retain stale API content indefinitely when a connection fails.
     cutoff = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat()
     state["mentions"] = {k: m for k, m in state["mentions"].items() if m.get("discovery") not in ("API search", "Reddit API") or m.get("updated_at", "") >= cutoff}

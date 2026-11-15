@@ -52,5 +52,42 @@ class CollectorTests(unittest.TestCase):
         self.assertIn('https://example.com/post',state['mentions'])
         self.assertEqual(state['mentions']['https://example.com/post']['title'],'<script>bad</script>')
 
+class DuckDuckGoTests(unittest.TestCase):
+    def test_parses_nested_titles_and_redirects(self):
+        html = '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.reddit.com%2Fr%2F3ds%2Fcomments%2Fabc123%2Ftitle%2F">3DSRP <b>release</b> &amp; news</a>'
+        self.assertEqual(collect.parse_duckduckgo(html), [{"url":"https://reddit.com/comments/abc123", "title":"3DSRP release & news"}])
+
+    def test_challenge_and_changed_markup_are_not_zero_results(self):
+        with self.assertRaises(collect.DuckDuckGoBlocked):
+            collect.parse_duckduckgo('<form id="challenge-form" action="anomaly.js">')
+        with self.assertRaises(collect.DuckDuckGoMarkupChanged):
+            collect.parse_duckduckgo('<html>Unexpected service error</html>')
+        self.assertEqual(collect.parse_duckduckgo('<div class="no-results">No results found</div>'), [])
+
+    def test_partial_search_preserves_api_metrics_and_records_failure(self):
+        url='https://reddit.com/comments/abc123'
+        state={'mentions':{url:{'url':url,'title':'API title','metrics':{'score':12},'updated_at':'yesterday','discovery':'Reddit API'}},'sources':{}}
+        first='<a class="result__a" href="https://reddit.com/comments/abc123">Search title</a><a class="result__a" href="https://example.com/news">New coverage</a>'
+        with patch.object(collect,'request',side_effect=[first.encode(),b'<form id="challenge-form">']),patch.object(collect.time,'sleep'):
+            collect.collect_duckduckgo(state,{'duckduckgo_queries':['first','second','third']})
+        self.assertEqual(state['mentions'][url]['title'],'API title')
+        self.assertEqual(state['mentions'][url]['metrics']['score'],12)
+        self.assertEqual(state['mentions'][url]['updated_at'],'yesterday')
+        self.assertIn('https://example.com/news',state['mentions'])
+        self.assertEqual(state['sources']['DuckDuckGo']['status'],'partial')
+        self.assertIn('1/3',state['sources']['DuckDuckGo']['message'])
+
+    def test_platform_matching_and_video_deduplication(self):
+        self.assertEqual(collect.platform_for('https://notreddit.com/post'),'Web')
+        self.assertEqual(collect.platform_for('https://old.reddit.com/post'),'Reddit')
+        self.assertEqual(collect.canonical('https://youtu.be/abcdefghijk?si=tracking'),collect.canonical('https://www.youtube.com/watch?v=abcdefghijk&feature=share'))
+
+    def test_success_and_empty_results(self):
+        state={'mentions':{},'sources':{}}
+        with patch.object(collect,'request',return_value=b'<div class="no-results">No results found</div>'):
+            collect.collect_duckduckgo(state,{'duckduckgo_queries':['3DSRP']})
+        self.assertEqual(state['sources']['DuckDuckGo']['status'],'ok')
+        self.assertEqual(state['mentions'],{})
+
 if __name__=='__main__':
     unittest.main()

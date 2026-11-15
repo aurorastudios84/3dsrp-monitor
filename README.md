@@ -25,7 +25,7 @@ The dashboard and its saved GitHub aggregates are PUBLIC. Secrets belong in repo
 | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_REFRESH_TOKEN` | Approved Reddit Data API app and permanent OAuth refresh token with read scope. Approval/eligibility are required; free availability is not guaranteed. |
 | `MONITOR_FEEDS` | Optional JSON list: `[{"name":"3DSRP alerts","url":"https://..."}]`. Supports RSS/Atom, including a Google Alert RSS URL if available in your account. Feed URLs stay secret; discovered links are published. |
 
-Google Alerts must be created manually for the queries in config.json. Choose RSS delivery if available. Without configured feeds, there is NO automatic general web/social search. Do not put private feed content into a public dashboard. Publisher feeds are ingested in full; use topic-specific feeds.
+Google Alerts must be created manually for the queries in config.json. Choose RSS delivery if available. DuckDuckGo provides supplementary automatic discovery without keys; feeds remain an optional additional source. Do not put private feed content into a public dashboard. Publisher feeds are ingested in full; use topic-specific feeds.
 
 ## Coverage and meaning
 
@@ -33,7 +33,8 @@ Google Alerts must be created manually for the queries in config.json. Choose RS
 - GitHub traffic: merges the rolling 14-day daily windows by timestamp, updating partial days. Daily uniques cannot be summed into unique people over a period. No historical traffic before the available window can be recovered.
 - YouTube: up to 25 recent videos per configured query, then refreshes all discovered videos. Broad search candidates can be unrelated. Unavailable videos are removed. API-derived mention records expire after 30 days without a successful refresh.
 - Reddit: up to 50 recent search results per query. Refreshes every known thread to show current scores, comment counts and net comment-count changes. This is not exhaustive Reddit search, global comment search, or a feed of individual replies. No comment bodies or post view counts are collected. Removed/unavailable threads are removed from the current snapshot. Seed links are manually verified, not automatically live metrics.
-- Web: optional RSS/Atom. X, Instagram and Facebook are search shortcuts, not automatic scrapers. Login may be needed for native searches.
+- DuckDuckGo: eight small queries per day through the unofficial HTML search page, spaced two seconds apart. Collects titles and links from indexed pages, classifies platforms, and deduplicates existing mentions without overwriting API metrics. Stops on challenges, blocked requests or unrecognized HTML; preserves prior links and reports incomplete coverage. No CAPTCHA bypass or paid search service. Search snippets do not establish view counts or publication dates. Edit `duckduckgo_queries` in config.json to change searches.
+- Web: optional RSS/Atom. X, Instagram and Facebook can appear in DuckDuckGo discoveries; their native search shortcuts remain available. No direct social scraping or engagement metrics. Login may be needed for native searches.
 - Reading/bookmark/hide controls persist only in the current browser. All external text is escaped; only HTTP(S) links are rendered.
 
 Only GitHub historical aggregates are committed to Git. Current mention data is loaded from the previous published snapshot and replaced at each deployment; it is excluded from Git history. Deployment artifacts expire after one day. No claim of unique audience, complete coverage, installs, active usage or causation is made.
